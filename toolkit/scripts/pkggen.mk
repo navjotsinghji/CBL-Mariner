@@ -98,9 +98,14 @@ $(specs_file): $(chroot_worker) $(BUILD_SPECS_DIR) $(build_specs) $(build_spec_d
 
 # Convert the dependency information in the json file into a graph structure
 # We require all the toolchain RPMs to be available here to help resolve unfixable cyclic dependencies
+# Can change --packageURLlist name to --packageURL
 $(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms)
 	$(go-grapher) \
 		--input $(specs_file) \
+		--usePMCtoResolveCycles $(RESOLVE_CYCLES_FROM_PMC) \
+		$(foreach packageurl, $(PACKAGE_URL_LIST), --packageURLlist=$(packageurl) )\
+		--tls-cert=$(TLS_CERT) \
+		--tls-key=$(TLS_KEY) \
 		$(logging_command) \
 		--cpu-prof-file=$(PROFILE_DIR)/grapher.cpu.pprof \
 		--mem-prof-file=$(PROFILE_DIR)/grapher.mem.pprof \

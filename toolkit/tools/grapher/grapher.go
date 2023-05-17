@@ -28,6 +28,10 @@ var (
 	strictGoals      = app.Flag("strict-goals", "Don't allow missing goal packages").Bool()
 	strictUnresolved = app.Flag("strict-unresolved", "Don't allow missing unresolved packages").Bool()
 	timestampFile    = app.Flag("timestamp-file", "File that stores timestamps for this program.").String()
+	usePMCtoResolveCycles = app.Flag("usePMCtoresolvecycles", "Cycles will be resolved by downloading rpm packages from PMC if locally unavailable").Bool()
+	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
+        tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
+        packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
 
 	depGraph = pkggraph.NewPkgGraph()
 )
@@ -67,7 +71,17 @@ func main() {
 	}
 
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
-	err = depGraph.MakeDAG()
+	//if usePMCtoResolveCycles is true, then cycles will be resolved by downloading rpm packages from PMC if locally unavailable
+	//take packageURLlist as string of array of package urls
+	//if usePMCtoResolveCycles is false, call MakeDAG without packageURLlist
+	/*
+	if *usePMCtoResolveCycles {
+	}
+	else {
+		err = depGraph.MakeDAG(*usePMCtoResolveCycles)
+	}
+	*/
+	err = depGraph.MakeDAG(*usePMCtoResolveCycles, *tlsClientCert, *tlsClientKey, *packageURLlist...)
 	if err != nil {
 		logger.Log.Panic(err)
 	}
