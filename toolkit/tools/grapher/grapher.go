@@ -71,17 +71,7 @@ func main() {
 	}
 
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
-	//if usePMCtoResolveCycles is true, then cycles will be resolved by downloading rpm packages from PMC if locally unavailable
-	//take packageURLlist as string of array of package urls
-	//if usePMCtoResolveCycles is false, call MakeDAG without packageURLlist
-	/*
-	if *usePMCtoResolveCycles {
-	}
-	else {
-		err = depGraph.MakeDAG(*usePMCtoResolveCycles)
-	}
-	*/
-	err = depGraph.MakeDAG(*usePMCtoResolveCycles, *tlsClientCert, *tlsClientKey, *packageURLlist...)
+	err = depGraph.MakeDAG()
 	if err != nil {
 		logger.Log.Panic(err)
 	}

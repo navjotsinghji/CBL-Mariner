@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/shell"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1125,74 +1124,11 @@ func (g *PkgGraph) CreateSubGraph(rootNode *PkgNode) (subGraph *PkgGraph, err er
 
 // IsSRPMPrebuilt checks if an SRPM is prebuilt, returning true if so along with a slice of corresponding prebuilt RPMs.
 // The function will lock 'graphMutex' before performing the check if the mutex is not nil.
-func IsSRPMPrebuilt(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex, usePMCtoResolveCycles bool, tlsClientCert string, tlsClientKey string, packageURLlist ...string) (isPrebuilt bool, expectedFiles, missingFiles []string) {
+func IsSRPMPrebuilt(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex) (isPrebuilt bool, expectedFiles, missingFiles []string) {
 	expectedFiles = rpmsProvidedBySRPM(srpmPath, pkgGraph, graphMutex)
 	logger.Log.Tracef("Expected RPMs from %s: %v", srpmPath, expectedFiles)
 	isPrebuilt, missingFiles = findAllRPMS(expectedFiles)
 	logger.Log.Tracef("Missing RPMs from %s: %v", srpmPath, missingFiles)
-	//TODO: change name of missingFiles to something more suitable
-	//if usePMCtoResolveCycles is enabled, attempt to download missingFiles from PMC
-	if !isPrebuilt && usePMCtoResolveCycles {
-		logger.Log.Debugf("Attempting to download missing RPMs from PMC")
-		downloadSuccessful, missingFiles, err := downloadMissingRPMSFromPMC(missingFiles, tlsClientCert, tlsClientKey, packageURLlist...)
-		if err != nil {
-			logger.Log.Errorf("Error downloading missing RPMs from PMC: %v", err)
-		}
-		if downloadSuccessful {
-			isPrebuilt = true
-			logger.Log.Debugf("Successfully downloaded missing RPMs provided by %s from PMC", srpmPath)
-		} else {
-			logger.Log.Tracef("Missing RPMs from %s: %v", srpmPath, missingFiles)
-		}
-	}
-	return
-}
-
-func downloadMissingRPMSFromPMC(filestoDownload []string, tlsClientCert string, tlsClientKey string, packageURLlist ...string) (downloadSuccessful bool, missingFiles []string, err error) {
-	for _, filetoDownload := range filestoDownload {
-		rpmName := filepath.Base(filetoDownload)
-		rpmDir := filepath.Dir(filetoDownload)
-		//extract folder name from rpmDir as arch
-		arch := filepath.Base(rpmDir)
-		fileDownloadSuccessful := false
-		for _, packageURL := range packageURLlist {
-			//construct the url to download the rpm
-			//remove build_arch from packageURL
-			packageURL = filepath.Dir(packageURL)
-			//append arch to packageURL
-			packageURL = filepath.Join(packageURL, arch)
-			rpmURL := filepath.Join(packageURL, rpmName)
-			logger.Log.Debugf("Attempting to download %s from %s using %s", rpmName, packageURL, rpmURL)
-			baseArgs := []string{
-				"-nv",
-				"--no-clobber",
-				"-P",
-				rpmDir,
-			}
-			if tlsClientCert !="" && tlsClientKey != "" {
-				baseArgs = append(baseArgs, "--certificate", tlsClientCert, "--private-key", tlsClientKey)
-			}
-			baseArgs = append(baseArgs, rpmURL)
-			logger.Log.Debugf("baseArgs: %v", baseArgs)
-			_, stderr, err := shell.Execute("wget", baseArgs...)
-			if err != nil {
-				//print stderr only
-				logger.Log.Errorf("stderr: %s", stderr)
-				logger.Log.Errorf("Error downloading %s from %s using %s: %v", rpmName, packageURL, rpmURL, err)
-			} else {
-				fileDownloadSuccessful = true
-				logger.Log.Debugf("Successfully downloaded %s from %s using %s", rpmName, packageURL, rpmURL)
-				break
-			}
-		}
-		if !fileDownloadSuccessful {
-			//add rpmName to missingFiles
-			missingFiles = append(missingFiles, rpmName)
-		}
-	}
-	if len(missingFiles) == 0 {
-		downloadSuccessful = true
-	}
 	return
 }
 
@@ -1261,7 +1197,7 @@ func (g *PkgGraph) DeepCopy() (deepCopy *PkgGraph, err error) {
 
 // MakeDAG ensures the graph is a directed acyclic graph (DAG).
 // If the graph is not a DAG, this routine will attempt to resolve any cycles to make the graph a DAG.
-func (g *PkgGraph) MakeDAG(usePMCtoResolveCycles bool, tlsClientCert string, tlsClientKey string, packageURLlist ...string) (err error) {
+func (g *PkgGraph) MakeDAG() (err error) {
 	timestamp.StartEvent("convert to DAG", nil)
 	defer timestamp.StopEvent(nil)
 	var cycle []*PkgNode
@@ -1272,7 +1208,7 @@ func (g *PkgGraph) MakeDAG(usePMCtoResolveCycles bool, tlsClientCert string, tls
 			return
 		}
 
-		err = g.fixCycle(cycle, usePMCtoResolveCycles, tlsClientCert, tlsClientKey, packageURLlist...)
+		err = g.fixCycle(cycle)
 		if err != nil {
 			return formatCycleErrorMessage(cycle, err)
 		}
@@ -1303,7 +1239,7 @@ func (g *PkgGraph) CloneNode(pkgNode *PkgNode) (newNode *PkgNode) {
 // fixCycle attempts to fix a cycle. Cycles may be acceptable if:
 // - all nodes are from the same spec file or
 // - at least one of the nodes of the cycle represents a pre-built SRPM.
-func (g *PkgGraph) fixCycle(cycle []*PkgNode, usePMCtoResolveCycles bool, tlsClientCert string, tlsClientKey string, packageURLlist ...string) (err error) {
+func (g *PkgGraph) fixCycle(cycle []*PkgNode) (err error) {
 	logger.Log.Debugf("Found cycle: %v", cycle)
 
 	// Omit the first element of the cycle, since it is repeated as the last element
@@ -1314,7 +1250,7 @@ func (g *PkgGraph) fixCycle(cycle []*PkgNode, usePMCtoResolveCycles bool, tlsCli
 		return
 	}
 
-	return g.fixPrebuiltSRPMsCycle(trimmedCycle, usePMCtoResolveCycles, tlsClientCert, tlsClientKey, packageURLlist...)
+	return g.fixPrebuiltSRPMsCycle(trimmedCycle)
 }
 
 // fixIntraSpecCycle attempts to fix a cycle if none of the cycle nodes are build nodes.
@@ -1384,7 +1320,7 @@ func (g *PkgGraph) fixIntraSpecCycle(trimmedCycle []*PkgNode) (err error) {
 
 // fixPrebuiltSRPMsCycle attempts to fix a cycle if at least one node is a pre-built SRPM.
 // If a cycle can be fixed, edges representing the build dependencies of the pre-built SRPM will be removed.
-func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, usePMCtoResolveCycles bool, tlsClientCert string, tlsClientKey string, packageURLlist ...string) (err error) {
+func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode) (err error) {
 	logger.Log.Debug("Checking if cycle contains pre-built SRPMs.")
 
 	currentNode := trimmedCycle[len(trimmedCycle)-1]
@@ -1395,8 +1331,7 @@ func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, usePMCtoResolv
 		// 2. Every build cycle must contain at least one edge between a build node and a run node from different SRPMs.
 		//    These edges represent the 'BuildRequires' from the .spec file. If the cycle is breakable, the run node comes from a pre-built SRPM.
 		buildToRunEdge := previousNode.Type == TypeBuild && currentNode.Type == TypeRun
-		//Download the rpms provided by the SRPM from PMC if usePMCtoResolveCycles flag is enabled
-		if isPrebuilt, _, _ := IsSRPMPrebuilt(currentNode.SrpmPath, g, nil, usePMCtoResolveCycles, tlsClientCert, tlsClientKey, packageURLlist...); buildToRunEdge && isPrebuilt {
+		if isPrebuilt, _, _ := IsSRPMPrebuilt(currentNode.SrpmPath, g, nil); buildToRunEdge && isPrebuilt {
 			logger.Log.Debugf("Cycle contains pre-built SRPM '%s'. Replacing edges from build nodes associated with '%s' with an edge to a new 'PreBuilt' node.",
 				currentNode.SrpmPath, previousNode.SrpmPath)
 
