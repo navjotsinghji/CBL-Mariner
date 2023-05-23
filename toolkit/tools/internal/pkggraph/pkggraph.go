@@ -19,6 +19,7 @@ import (
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/file"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/logger"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/pkgjson"
+	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/packagerepo/repocloner/rpmrepocloner"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/sliceutils"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/timestamp"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/versioncompare"
@@ -1122,6 +1123,17 @@ func (g *PkgGraph) CreateSubGraph(rootNode *PkgNode) (subGraph *PkgGraph, err er
 	return
 }
 
+// IsSRPMAvailablePMC checks if an SRPM is prebuilt, returning true if so along with a slice of corresponding prebuilt RPMs.
+// The function will lock 'graphMutex' before performing the check if the mutex is not nil.
+func IsSRPMAvailablePMC(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo bool, repoFiles []string) (isPrebuilt bool, expectedFiles, missingFiles []string) {
+//	expectedRpmsMap := make(map[*pkgjson.PackageVer]bool)
+	expectedRpmsMap := nodesProvidedBySRPM(srpmPath, pkgGraph, graphMutex)
+//	logger.Log.Tracef("Expected RPMs from %s: %v", srpmPath, expectedFiles)
+	isPrebuilt, missingFiles = findAllRPMSinPMC(expectedRpmsMap, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, repoFiles)
+//	logger.Log.Tracef("Missing RPMs from %s: %v", srpmPath, missingFiles)
+	return
+}
+
 // IsSRPMPrebuilt checks if an SRPM is prebuilt, returning true if so along with a slice of corresponding prebuilt RPMs.
 // The function will lock 'graphMutex' before performing the check if the mutex is not nil.
 func IsSRPMPrebuilt(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex) (isPrebuilt bool, expectedFiles, missingFiles []string) {
@@ -1209,6 +1221,29 @@ func (g *PkgGraph) MakeDAG() (err error) {
 		}
 
 		err = g.fixCycle(cycle)
+		if err != nil {
+			return formatCycleErrorMessage(cycle, err)
+		}
+	}
+}
+
+// MakeDAG ensures the graph is a directed acyclic graph (DAG).
+// If the graph is not a DAG, this routine will attempt to resolve any cycles to make the graph a DAG.
+func (g *PkgGraph) MakeDAGwithPMC(outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo bool, repoFiles []string) (err error) {
+	var cycle []*PkgNode
+
+	for {
+		cycle, err = g.FindAnyDirectedCycle()
+		if err != nil || len(cycle) == 0 {
+			return
+		}
+
+		logger.Log.Debugf("Found cycle: %v", cycle)
+	
+		// Omit the first element of the cycle, since it is repeated as the last element
+		trimmedCycle := cycle[1:]
+
+		err = g.fixPrebuiltSRPMsCyclewithPMC(trimmedCycle, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, repoFiles)
 		if err != nil {
 			return formatCycleErrorMessage(cycle, err)
 		}
@@ -1320,6 +1355,56 @@ func (g *PkgGraph) fixIntraSpecCycle(trimmedCycle []*PkgNode) (err error) {
 
 // fixPrebuiltSRPMsCycle attempts to fix a cycle if at least one node is a pre-built SRPM.
 // If a cycle can be fixed, edges representing the build dependencies of the pre-built SRPM will be removed.
+func (g *PkgGraph) fixPrebuiltSRPMsCyclewithPMC(trimmedCycle []*PkgNode, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo bool, repoFiles []string) (err error) {
+	logger.Log.Debug("Checking if cycle contains pre-built SRPMs.")
+
+	currentNode := trimmedCycle[len(trimmedCycle)-1]
+	for _, previousNode := range trimmedCycle {
+		// Why we're targetting only "build node -> run node" edges:
+		// 1. Explicit package rebuilds create an edge between the goal node and an SRPM's run nodes.
+		//    Considering that, we avoid accidentally skipping a rebuild by only removing edges between a build and a run node.
+		// 2. Every build cycle must contain at least one edge between a build node and a run node from different SRPMs.
+		//    These edges represent the 'BuildRequires' from the .spec file. If the cycle is breakable, the run node comes from a pre-built SRPM.
+		buildToRunEdge := previousNode.Type == TypeBuild && currentNode.Type == TypeRun
+		if isPrebuilt, _, _ := IsSRPMAvailablePMC(currentNode.SrpmPath, g, nil, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, repoFiles); buildToRunEdge && isPrebuilt {
+			//TODO: need to mark node as unresolved remote to be fetched by pkgfetcher
+			logger.Log.Debugf("Cycle contains SRPM %s whose rpms are all available in PMC. MARK this node as remote unresolved", currentNode.SrpmPath);
+			logger.Log.Debugf("Cycle contains pre-built SRPM '%s'. Replacing edges from build nodes associated with '%s' with an edge to a new 'PreBuilt' node.",
+				currentNode.SrpmPath, previousNode.SrpmPath)
+
+			preBuiltNode := g.CloneNode(currentNode)
+			preBuiltNode.State = StateUnresolved
+			//StateUnresolved
+			//TypeRemote
+			preBuiltNode.Type = TypeRemote
+
+			logger.Log.Debugf("Adding a 'PreBuilt' remote unresolved node '%s' with id %d.", preBuiltNode.FriendlyName(), preBuiltNode.ID())
+
+			parentNodes := g.To(currentNode.ID())
+			for parentNodes.Next() {
+				parentNode := parentNodes.Node().(*PkgNode)
+				if parentNode.Type == TypeBuild && parentNode.SrpmPath == previousNode.SrpmPath {
+					g.RemoveEdge(parentNode.ID(), currentNode.ID())
+
+					err = g.AddEdge(parentNode, preBuiltNode)
+					if err != nil {
+						logger.Log.Errorf("Adding edge failed for %v -> %v", parentNode, preBuiltNode)
+						return
+					}
+				}
+			}
+
+			return
+		}
+
+		currentNode = previousNode
+	}
+
+	return fmt.Errorf("cycle contains no pre-build SRPMs, unresolvable")
+}
+
+// fixPrebuiltSRPMsCycle attempts to fix a cycle if at least one node is a pre-built SRPM.
+// If a cycle can be fixed, edges representing the build dependencies of the pre-built SRPM will be removed.
 func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode) (err error) {
 	logger.Log.Debug("Checking if cycle contains pre-built SRPMs.")
 
@@ -1397,6 +1482,44 @@ func formatCycleErrorMessage(cycle []*PkgNode, err error) error {
 	return fmt.Errorf("cycles detected in dependency graph")
 }
 
+// nodesProvidedBySRPM returns all RPMs produced from a SRPM file.
+// could also return []*PkgNode
+// instead of map[PkgNode.VersionedPkg]bool
+// refer AllRunNodes
+func nodesProvidedBySRPM(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex) (rpmNodes map[*pkgjson.PackageVer]bool) {
+	if graphMutex != nil {
+		graphMutex.RLock()
+		defer graphMutex.RUnlock()
+	}
+
+//	rpmsMap := make(map[PkgNode.VersionedPkg]bool)
+	rpmNodes = make(map[*pkgjson.PackageVer]bool)
+	runNodes := pkgGraph.AllRunNodes()
+	for _, node := range runNodes {
+		if node.SrpmPath != srpmPath {
+			continue
+		}
+
+		if node.RpmPath == "" || node.RpmPath == "<NO_RPM_PATH>" {
+			continue
+		}
+
+		clonedNodeWithoutVer := node.VersionedPkg
+		clearVersion(clonedNodeWithoutVer)
+		rpmNodes[clonedNodeWithoutVer] = true
+	}
+
+	return
+}
+
+
+func clearVersion(pkg *pkgjson.PackageVer) {
+	pkg.Version = ""
+	pkg.SVersion = ""
+	pkg.Condition = ""
+	pkg.SCondition = ""
+}
+
 // rpmsProvidedBySRPM returns all RPMs produced from a SRPM file.
 func rpmsProvidedBySRPM(srpmPath string, pkgGraph *PkgGraph, graphMutex *sync.RWMutex) (rpmFiles []string) {
 	if graphMutex != nil {
@@ -1435,6 +1558,81 @@ func findAllRPMS(rpmsToFind []string) (foundAllRpms bool, missingRpms []string) 
 			missingRpms = append(missingRpms, rpm)
 		}
 	}
+	foundAllRpms = len(missingRpms) == 0
+
+	return
+}
+
+// findAllRPMS returns true if all RPMs requested are found in PMC/repo.
+//  This is used to check if all RPMs are available in PMC/repo before starting a build.
+//  needs repo-list, manifest files rpmrepocloner
+//	Also returns a list of all missing files
+func findAllRPMSinPMC(rpmsToFind map[*pkgjson.PackageVer]bool, outDir, tmpDir, workerTar string, existingRpmsDir string, existingToolchainRpmsDir string, usePreviewRepo bool, repoFiles []string) (foundAllRpms bool, missingRpms []string) {
+
+        // Create the worker environment
+// Initialize initializes rpmrepocloner, enabling Clone() to be called.
+//   - destinationDir is the directory to save RPMs
+//   - tmpDir is the directory to create a chroot
+//   - workerTar is the path to the worker tar used to seed the chroot
+//   - existingRpmsDir is the directory with prebuilt RPMs
+//   - prebuiltRpmsDir is the directory with toolchain RPMs
+//   - usePreviewRepo if set, the upstream preview repository will be used.
+//   - repoDefinitions is a list of repo files to use when cloning RPMs
+
+        cloner := rpmrepocloner.New()
+	err := cloner.Initialize(outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, repoFiles)
+        if err != nil {
+                logger.Log.Errorf("Failed to initialize RPM repo cloner. Error: %s", err)
+                return
+        }
+        defer cloner.Close()
+
+	//TODO: need to add tlskey and tlsCert, also disableUpstreamRepos
+	disableUpstreamRepos := false
+	tlsClientKey := ""
+	tlsClientCert := ""
+        if !disableUpstreamRepos {
+		/*TODO: edit */
+                logger.Log.Debugf("upstream repos enabled, need tlskey and tlscert")
+                tlsKey, tlsCert := strings.TrimSpace(tlsClientKey), strings.TrimSpace(tlsClientCert)
+                err = cloner.AddNetworkFiles(tlsCert, tlsKey)
+                if err != nil {
+                        logger.Log.Panicf("Failed to customize RPM repo cloner. Error: %s", err)
+                }
+        }
+
+	//for each rpmToFind in rpmsToFind, do
+	for node := range rpmsToFind {
+               logger.Log.Debugf("Searching for a package which supplies: %s", node.Name)
+//               logger.Log.Debugf("Searching for a package which supplies: %s", node.VersionedPkg.Name)
+               // Resolve nodes to exact package names so they can be referenced in the graph.
+//               resolvedPackages, err := cloner.WhatProvides(node.VersionedPkg)
+               resolvedPackages, err := cloner.WhatProvides(node)
+               if err != nil {
+                       //msg := fmt.Sprintf("Failed to resolve (%s) to a package. Error: %s", node.VersionedPkg, err)
+                       msg := fmt.Sprintf("Failed to resolve (%s) to a package. Error: %s", node, err)
+		       logger.Log.Debug(msg)
+                       // It is not an error if an implicit node could not be resolved as it may become available later in the build.
+                       // If it does not become available scheduler will print an error at the end of the build.
+		       /* TODO: find out what are implicit nodes, if implicit nodes can be allowed at this stage to be marked available or not
+                       if node.Implicit {
+                               logger.Log.Debug(msg)
+                       } else {
+                               logger.Log.Error(msg)
+                       }
+		       */
+                       return
+               }
+
+               if len(resolvedPackages) == 0 {
+		       /*Name*/
+		       logger.Log.Debugf("Did not find (%s) in repos", node.Name)
+		       missingRpms = append(missingRpms, node.Name)
+                       logger.Log.Infof("failed to find any packages providing '%v'", node)
+                       //logger.Log.Infof("failed to find any packages providing '%v'", node.VersionedPkg)
+               }
+	}
+
 	foundAllRpms = len(missingRpms) == 0
 
 	return

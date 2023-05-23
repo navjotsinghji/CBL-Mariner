@@ -96,6 +96,32 @@ $(specs_file): $(chroot_worker) $(BUILD_SPECS_DIR) $(build_specs) $(build_spec_d
 		$(if $(TARGET_ARCH),--target-arch="$(TARGET_ARCH)") \
 		--output $@
 
+grapher_cycle_flags :=
+
+grapher_extra_flags :=
+ifeq ($(DISABLE_UPSTREAM_REPOS),y)
+grapher_extra_flags += --disable-upstream-repos
+endif
+
+ifeq ($(USE_PREVIEW_REPO),y)
+grapher_extra_flags += --use-preview-repo
+endif
+
+ifeq ($(RESOLVE_CYCLES_FROM_REPO),y)
+grapher_cycle_flags += --resolve-cycles-from-repo
+endif
+
+grapher_cycle_flags += --output-dir=$(CACHED_RPMS_DIR)/cache
+grapher_cycle_flags += --rpm-dir=$(RPMS_DIR)
+grapher_cycle_flags += --toolchain-rpms-dir=$(TOOLCHAIN_RPMS_DIR)
+grapher_cycle_flags += --toolchain-manifest=$(TOOLCHAIN_MANIFEST)
+grapher_cycle_flags += --tmp-dir=$(cache_working_dir)
+grapher_cycle_flags += --tdnf-worker=$(chroot_worker)
+grapher_cycle_flags += $(foreach repo, $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(REPO_LIST), --repo-file=$(repo))
+grapher_cycle_flags += $(grapher_extra_flags)
+
+#TODO: might have to add one more flag to enable cycle resolution from PMC, rest related options can be enabled only when this flag is set
+
 # Convert the dependency information in the json file into a graph structure
 # We require all the toolchain RPMs to be available here to help resolve unfixable cyclic dependencies
 $(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms)
@@ -109,7 +135,8 @@ $(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms)
 		$(if $(filter y,$(ENABLE_MEM_PROFILE)),--enable-mem-prof) \
 		$(if $(filter y,$(ENABLE_TRACE)),--enable-trace) \
 		--timestamp-file=$(TIMESTAMP_DIR)/grapher.jsonl \
-		--output $@
+		--output $@ \
+		$(grapher_cycle_flags)
 
 # We want to detect changes in the RPM cache, but we are not responsible for directly rebuilding any missing files.
 $(CACHED_RPMS_DIR)/%: ;

@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/exe"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/logger"
@@ -32,6 +33,18 @@ var (
 	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
         tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
         packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
+
+	resolveCyles		 = app.Flag("resolve-cycles-from-repo", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
+	outDir      = exe.OutputDirFlag(app, "Directory to download packages into.")
+        existingRpmsDir          = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
+        existingToolchainRpmDir = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
+        tmpDir                  = app.Flag("tmp-dir", "Directory to store temporary files while downloading.").String()
+
+        workerTar            = app.Flag("tdnf-worker", "Full path to worker_chroot.tar.gz").Required().ExistingFile()
+        repoFiles            = app.Flag("repo-file", "Full path to a repo file").Required().ExistingFiles()
+        usePreviewRepo       = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
+        disableUpstreamRepos = app.Flag("disable-upstream-repos", "Disables pulling packages from upstream repos").Bool()
+        toolchainManifest    = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
 
 	depGraph = pkggraph.NewPkgGraph()
 )
@@ -73,7 +86,17 @@ func main() {
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
 	err = depGraph.MakeDAG()
 	if err != nil {
-		logger.Log.Panic(err)
+		if(*resolveCyles) {
+			//if err contains the string "cycles detected in graph", then call
+			if strings.Contains(err.Error(), "cycles detected") {
+				err = depGraph.MakeDAGwithPMC(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles)
+			}
+			if err != nil {
+				logger.Log.Panic(err)
+			}
+		} else {
+			logger.Log.Panic(err)
+		}
 	}
 
 	err = pkggraph.WriteDOTGraphFile(depGraph, *output)
