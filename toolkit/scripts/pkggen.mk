@@ -99,16 +99,19 @@ $(specs_file): $(chroot_worker) $(BUILD_SPECS_DIR) $(build_specs) $(build_spec_d
 grapher_cycle_flags :=
 
 grapher_extra_flags :=
-ifeq ($(DISABLE_UPSTREAM_REPOS),y)
-grapher_extra_flags += --disable-upstream-repos
-endif
 
 ifeq ($(USE_PREVIEW_REPO),y)
 grapher_extra_flags += --use-preview-repo
 endif
 
-ifeq ($(RESOLVE_CYCLES_FROM_REPO),y)
-grapher_cycle_flags += --resolve-cycles-from-repo
+ifeq ($(RESOLVE_CYCLES_FROM_UPSTREAM),y)
+grapher_cycle_flags += --resolve-cycles-from-upstream
+endif
+
+ifeq ($(RESOLVE_CYCLES_FROM_UPSTREAM),y)
+   ifeq ($(DISABLE_UPSTREAM_REPOS),y)
+      $(error RESOLVE_CYCLES_FROM_UPSTREAM requires upstream repos to be enabled. Please set DISABLE_UPSTREAM_REPOS=n)
+   endif
 endif
 
 grapher_cycle_flags += --output-dir=$(CACHED_RPMS_DIR)/cache
@@ -119,8 +122,6 @@ grapher_cycle_flags += --tmp-dir=$(cache_working_dir)
 grapher_cycle_flags += --tdnf-worker=$(chroot_worker)
 grapher_cycle_flags += $(foreach repo, $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(REPO_LIST), --repo-file=$(repo))
 grapher_cycle_flags += $(grapher_extra_flags)
-
-#TODO: might have to add one more flag to enable cycle resolution from PMC, rest related options can be enabled only when this flag is set
 
 # Convert the dependency information in the json file into a graph structure
 # We require all the toolchain RPMs to be available here to help resolve unfixable cyclic dependencies

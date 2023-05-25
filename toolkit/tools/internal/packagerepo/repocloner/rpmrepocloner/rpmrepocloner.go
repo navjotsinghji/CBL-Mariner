@@ -396,8 +396,6 @@ func (r *RpmRepoCloner) WhatProvides(pkgVer *pkgjson.PackageVer) (packageNames [
 		releaseverCliArg string
 	)
 
-	//print pkgVer
-	logger.Log.Debugf("WhatProvides: %s", pkgVer)
 	releaseverCliArg, err = tdnf.GetReleaseverCliArg()
 	if err != nil {
 		return

@@ -59,7 +59,7 @@ REBUILD_DEP_CHAINS              ?= y
 HYDRATED_BUILD                  ?= n
 TARGET_ARCH                     ?=
 ALLOW_TOOLCHAIN_REBUILDS        ?= n
-RESOLVE_CYCLES_FROM_REPO        ?= n
+RESOLVE_CYCLES_FROM_UPSTREAM    ?= n
 
 # Tracing & Profiling support: https://go.dev/doc/diagnostics
 ENABLE_CPU_PROFILE              ?= n

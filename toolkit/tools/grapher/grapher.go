@@ -34,7 +34,7 @@ var (
         tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
         packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
 
-	resolveCyles		 = app.Flag("resolve-cycles-from-repo", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
+	resolveCylesFromUpstream = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
 	outDir      = exe.OutputDirFlag(app, "Directory to download packages into.")
         existingRpmsDir          = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
         existingToolchainRpmDir = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
@@ -43,7 +43,6 @@ var (
         workerTar            = app.Flag("tdnf-worker", "Full path to worker_chroot.tar.gz").Required().ExistingFile()
         repoFiles            = app.Flag("repo-file", "Full path to a repo file").Required().ExistingFiles()
         usePreviewRepo       = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
-        disableUpstreamRepos = app.Flag("disable-upstream-repos", "Disables pulling packages from upstream repos").Bool()
         toolchainManifest    = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
 	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
 	tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
@@ -88,10 +87,10 @@ func main() {
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
 	err = depGraph.MakeDAG()
 	if err != nil {
-		if(*resolveCyles) {
+		if(*resolveCylesFromUpstream) {
 			//if err contains the string "cycles detected in graph", then call
 			if strings.Contains(err.Error(), "cycles detected") {
-				err = depGraph.MakeDAGwithPMC(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles, *disableUpstreamRepos, *tlsClientKey, *tlsClientCert)
+				err = depGraph.MakeDAGuseUpstreamRepos(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles, *tlsClientKey, *tlsClientCert)
 			}
 			if err != nil {
 				logger.Log.Panic(err)
