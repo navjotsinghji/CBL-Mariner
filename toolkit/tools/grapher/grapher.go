@@ -45,6 +45,8 @@ var (
         usePreviewRepo       = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
         disableUpstreamRepos = app.Flag("disable-upstream-repos", "Disables pulling packages from upstream repos").Bool()
         toolchainManifest    = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
+	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
+	tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
 
 	depGraph = pkggraph.NewPkgGraph()
 )
@@ -89,7 +91,7 @@ func main() {
 		if(*resolveCyles) {
 			//if err contains the string "cycles detected in graph", then call
 			if strings.Contains(err.Error(), "cycles detected") {
-				err = depGraph.MakeDAGwithPMC(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles)
+				err = depGraph.MakeDAGwithPMC(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles, *disableUpstreamRepos, *tlsClientKey, *tlsClientCert)
 			}
 			if err != nil {
 				logger.Log.Panic(err)
