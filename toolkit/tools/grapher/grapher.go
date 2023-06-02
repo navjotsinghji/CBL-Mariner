@@ -6,7 +6,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/exe"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/logger"
@@ -34,18 +33,16 @@ var (
         tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
         packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
 
-	resolveCylesFromUpstream = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
-	outDir      = exe.OutputDirFlag(app, "Directory to download packages into.")
-        existingRpmsDir          = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
-        existingToolchainRpmDir = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
-        tmpDir                  = app.Flag("tmp-dir", "Directory to store temporary files while downloading.").String()
-
-        workerTar            = app.Flag("tdnf-worker", "Full path to worker_chroot.tar.gz").Required().ExistingFile()
-        repoFiles            = app.Flag("repo-file", "Full path to a repo file").Required().ExistingFiles()
-        usePreviewRepo       = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
-        toolchainManifest    = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
-	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
-	tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
+	resolveCylesFromUpstream      = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
+	outDir                        = exe.OutputDirFlag(app, "Directory to download packages into.")
+	existingRpmsDir               = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
+	existingToolchainRpmDir       = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
+	tmpDir                        = app.Flag("tmp-dir", "Directory to store temporary files while downloading.").String()
+	workerTar                     = app.Flag("tdnf-worker", "Full path to worker_chroot.tar.gz").Required().ExistingFile()
+	repoFiles                     = app.Flag("repo-file", "Full path to a repo file").Required().ExistingFiles()
+	usePreviewRepo                = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
+	toolchainManifest             = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
+	ignoreVersionToResolveSelfDep = app.Flag("ignore-version-to-resolve-selfdep", "Ignore package version while downloading package from usptream when resolving cycle").Bool()
 
 	depGraph = pkggraph.NewPkgGraph()
 )
@@ -85,19 +82,9 @@ func main() {
 	}
 
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
-	err = depGraph.MakeDAG()
+	err = depGraph.MakeDAG(*resolveCylesFromUpstream, *outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *ignoreVersionToResolveSelfDep, *repoFiles)
 	if err != nil {
-		if(*resolveCylesFromUpstream) {
-			//if err contains the string "cycles detected in graph", then call
-			if strings.Contains(err.Error(), "cycles detected") {
-				err = depGraph.MakeDAGuseUpstreamRepos(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *repoFiles, *tlsClientKey, *tlsClientCert)
-			}
-			if err != nil {
-				logger.Log.Panic(err)
-			}
-		} else {
-			logger.Log.Panic(err)
-		}
+		logger.Log.Panic(err)
 	}
 
 	err = pkggraph.WriteDOTGraphFile(depGraph, *output)

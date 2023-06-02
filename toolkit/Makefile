@@ -60,6 +60,7 @@ HYDRATED_BUILD                  ?= n
 TARGET_ARCH                     ?=
 ALLOW_TOOLCHAIN_REBUILDS        ?= n
 RESOLVE_CYCLES_FROM_UPSTREAM    ?= n
+IGNORE_VERSION_TO_RESOLVE_SELFDEP    ?= n
 
 # Tracing & Profiling support: https://go.dev/doc/diagnostics
 ENABLE_CPU_PROFILE              ?= n

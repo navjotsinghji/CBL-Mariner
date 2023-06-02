@@ -90,6 +90,13 @@ func fetchPackages() (err error) {
 		return
 	}
 
+	/*If there is an existing runNode and then there is one more remote node, donot throw dup error, instead replace the run node with remote node*/
+	for _, pkgNode := range dependencyGraph.AllNodes() {
+		if pkgNode.Type == pkggraph.TypeRemote {
+			dependencyGraph.AddRemoteToLookup(pkgNode, true)
+		}
+	}
+
 	hasUnresolvedNodes := hasUnresolvedNodes(dependencyGraph)
 	if hasUnresolvedNodes {
 		// Create the worker environment

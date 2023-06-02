@@ -96,36 +96,15 @@ $(specs_file): $(chroot_worker) $(BUILD_SPECS_DIR) $(build_specs) $(build_spec_d
 		$(if $(TARGET_ARCH),--target-arch="$(TARGET_ARCH)") \
 		--output $@
 
-grapher_cycle_flags :=
-
-grapher_extra_flags :=
-
-ifeq ($(USE_PREVIEW_REPO),y)
-grapher_extra_flags += --use-preview-repo
-endif
-
-ifeq ($(RESOLVE_CYCLES_FROM_UPSTREAM),y)
-grapher_cycle_flags += --resolve-cycles-from-upstream
-endif
-
 ifeq ($(RESOLVE_CYCLES_FROM_UPSTREAM),y)
    ifeq ($(DISABLE_UPSTREAM_REPOS),y)
       $(error RESOLVE_CYCLES_FROM_UPSTREAM requires upstream repos to be enabled. Please set DISABLE_UPSTREAM_REPOS=n)
    endif
 endif
 
-grapher_cycle_flags += --output-dir=$(CACHED_RPMS_DIR)/cache
-grapher_cycle_flags += --rpm-dir=$(RPMS_DIR)
-grapher_cycle_flags += --toolchain-rpms-dir=$(TOOLCHAIN_RPMS_DIR)
-grapher_cycle_flags += --toolchain-manifest=$(TOOLCHAIN_MANIFEST)
-grapher_cycle_flags += --tmp-dir=$(cache_working_dir)
-grapher_cycle_flags += --tdnf-worker=$(chroot_worker)
-grapher_cycle_flags += $(foreach repo, $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(REPO_LIST), --repo-file=$(repo))
-grapher_cycle_flags += $(grapher_extra_flags)
-
 # Convert the dependency information in the json file into a graph structure
 # We require all the toolchain RPMs to be available here to help resolve unfixable cyclic dependencies
-$(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms)
+$(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms) $(rpm_cache_files) $(TOOLCHAIN_MANIFEST) $(chroot_worker) $(pkggen_local_repo) $(depend_REPO_LIST)
 	$(go-grapher) \
 		--input $(specs_file) \
 		$(logging_command) \
@@ -137,7 +116,16 @@ $(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms)
 		$(if $(filter y,$(ENABLE_TRACE)),--enable-trace) \
 		--timestamp-file=$(TIMESTAMP_DIR)/grapher.jsonl \
 		--output $@ \
-		$(grapher_cycle_flags)
+		$(if $(filter y,$(RESOLVE_CYCLES_FROM_UPSTREAM)), --resolve-cycles-from-upstream) \
+		$(if $(filter y,$(USE_PREVIEW_REPO)), --use-preview-repo) \
+		$(if $(filter y,$(IGNORE_VERSION_TO_RESOLVE_SELFDEP)), --ignore-version-to-resolve-selfdep) \
+		--output-dir=$(CACHED_RPMS_DIR)/cache \
+		--rpm-dir=$(RPMS_DIR) \
+		--toolchain-rpms-dir=$(TOOLCHAIN_RPMS_DIR) \
+		--toolchain-manifest=$(TOOLCHAIN_MANIFEST) \
+		--tmp-dir=$(cache_working_dir) \
+		--tdnf-worker=$(chroot_worker) \
+		$(foreach repo, $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(REPO_LIST), --repo-file=$(repo))
 
 # We want to detect changes in the RPM cache, but we are not responsible for directly rebuilding any missing files.
 $(CACHED_RPMS_DIR)/%: ;
