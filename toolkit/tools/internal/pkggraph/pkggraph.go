@@ -1187,9 +1187,9 @@ func (g *PkgGraph) CreateSubGraph(rootNode *PkgNode) (subGraph *PkgGraph, err er
 }
 
 // The function will lock 'graphMutex' before performing the check if the mutex is not nil.
-func isSRPMAvailableUpstream(pkgGraph *PkgGraph, graphMutex *sync.RWMutex, srpmPath, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo, ignoreVersionToResolveSelfDep bool, repoFiles []string) (isAvailableUpstream bool) {
+func isSRPMAvailableUpstream(pkgGraph *PkgGraph, graphMutex *sync.RWMutex, srpmPath string, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (isAvailableUpstream bool, err error) {
 	expectedRpmNodes := NodesProvidedBySRPM(srpmPath, pkgGraph, graphMutex)
-	isAvailableUpstream = findAllRPMSUpstream(expectedRpmNodes, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, ignoreVersionToResolveSelfDep, repoFiles)
+	isAvailableUpstream,err = findAllRPMSUpstream(expectedRpmNodes, ignoreVersionToResolveSelfDep, cloner)
 	return
 }
 
@@ -1268,7 +1268,7 @@ func (g *PkgGraph) DeepCopy() (deepCopy *PkgGraph, err error) {
 
 // MakeDAG ensures the graph is a directed acyclic graph (DAG).
 // If the graph is not a DAG, this routine will attempt to resolve any cycles to make the graph a DAG.
-func (g *PkgGraph) MakeDAG(resolveCylesFromUpstream bool, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo, ignoreVersionToResolveSelfDep bool, repoFiles []string) (err error) {
+func (g *PkgGraph) MakeDAG(resolveCyclesFromUpstream, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (err error) {
 	timestamp.StartEvent("convert to DAG", nil)
 	defer timestamp.StopEvent(nil)
 	var cycle []*PkgNode
@@ -1279,7 +1279,7 @@ func (g *PkgGraph) MakeDAG(resolveCylesFromUpstream bool, outDir, tmpDir, worker
 			return
 		}
 
-		err = g.fixCycle(cycle, resolveCylesFromUpstream, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, ignoreVersionToResolveSelfDep, repoFiles)
+		err = g.fixCycle(cycle, resolveCyclesFromUpstream, ignoreVersionToResolveSelfDep, cloner)
 		if err != nil {
 			return formatCycleErrorMessage(cycle, err)
 		}
@@ -1310,7 +1310,7 @@ func (g *PkgGraph) CloneNode(pkgNode *PkgNode) (newNode *PkgNode) {
 // fixCycle attempts to fix a cycle. Cycles may be acceptable if:
 // - all nodes are from the same spec file or
 // - at least one of the nodes of the cycle represents a pre-built SRPM.
-func (g *PkgGraph) fixCycle(cycle []*PkgNode, resolveCylesFromUpstream bool, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo, ignoreVersionToResolveSelfDep bool, repoFiles []string) (err error) {
+func (g *PkgGraph) fixCycle(cycle []*PkgNode, resolveCyclesFromUpstream, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (err error) {
 	logger.Log.Debugf("Found cycle: %v", cycle)
 
 	// Omit the first element of the cycle, since it is repeated as the last element
@@ -1321,7 +1321,7 @@ func (g *PkgGraph) fixCycle(cycle []*PkgNode, resolveCylesFromUpstream bool, out
 		return
 	}
 
-	return g.fixPrebuiltSRPMsCycle(trimmedCycle, resolveCylesFromUpstream, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, ignoreVersionToResolveSelfDep, repoFiles)
+	return g.fixPrebuiltSRPMsCycle(trimmedCycle, resolveCyclesFromUpstream, ignoreVersionToResolveSelfDep, cloner)
 }
 
 // fixIntraSpecCycle attempts to fix a cycle if none of the cycle nodes are build nodes.
@@ -1407,7 +1407,7 @@ func (g *PkgGraph) replaceCurrentNodeWithPrebuiltNode(currentNode, preBuiltNode,
 
 // fixPrebuiltSRPMsCycle attempts to fix a cycle if at least one node is a pre-built SRPM.
 // If a cycle can be fixed, edges representing the build dependencies of the pre-built SRPM will be removed.
-func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, resolveCylesFromUpstream bool, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo, ignoreVersionToResolveSelfDep bool, repoFiles []string) (err error) {
+func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, resolveCyclesFromUpstream, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (err error) {
 	logger.Log.Debug("Checking if cycle contains pre-built SRPMs.")
 
 	currentNode := trimmedCycle[len(trimmedCycle)-1]
@@ -1433,8 +1433,9 @@ func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, resolveCylesFr
 
 			return
 		}
-		if resolveCylesFromUpstream {
-			isAvailableUpstream := isSRPMAvailableUpstream(g, nil, currentNode.SrpmPath, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, ignoreVersionToResolveSelfDep, repoFiles)
+		if resolveCyclesFromUpstream {
+			isAvailableUpstream := false
+			isAvailableUpstream, err = isSRPMAvailableUpstream(g, nil, currentNode.SrpmPath, ignoreVersionToResolveSelfDep, cloner)
 			if buildToRunEdge && isAvailableUpstream {
 				//Mark node as unresolved remote to be fetched by pkgfetcher
 				logger.Log.Debugf("Cycle contains SRPM %s whose rpms are all available in PMC. MARK this node as remote unresolved", currentNode.SrpmPath)
@@ -1446,6 +1447,7 @@ func (g *PkgGraph) fixPrebuiltSRPMsCycle(trimmedCycle []*PkgNode, resolveCylesFr
 
 				logger.Log.Debugf("Adding a remote unresolved node '%s' with id %d.", upstreamAvailableNode.FriendlyName(), upstreamAvailableNode.ID())
 				g.replaceCurrentNodeWithPrebuiltNode(currentNode, upstreamAvailableNode, previousNode)
+				logger.Log.Info("Cycle resolved using upstream SRPMs.")
 				return
 			}
 		}
@@ -1577,20 +1579,7 @@ func findAllRPMS(rpmsToFind []string) (foundAllRpms bool, missingRpms []string) 
 // findAllRPMSUpstream returns true if all RPMs requested are found in PMC/repo.
 //  This is used to check if all RPMs are available in PMC/repo before starting a build.
 //  needs repo-list, manifest files rpmrepocloner
-func findAllRPMSUpstream(rpmsToFind []*PkgNode, outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir string, usePreviewRepo, ignoreVersionToResolveSelfDep bool, repoFiles []string) (foundAllRpms bool) {
-	cloner := rpmrepocloner.New()
-	err := cloner.Initialize(outDir, tmpDir, workerTar, existingRpmsDir, existingToolchainRpmsDir, usePreviewRepo, false, repoFiles)
-	if err != nil {
-		logger.Log.Errorf("Failed to initialize RPM repo cloner. Error: %s", err)
-		return
-	}
-	defer cloner.Close()
-
-	err = cloner.AddNetworkFiles("", "")
-	if err != nil {
-		logger.Log.Errorf("Failed to customize RPM repo cloner. Error: %s", err)
-	}
-
+func findAllRPMSUpstream(rpmsToFind []*PkgNode, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (foundAllRpms bool, err error) {
 	/*assuming allRPMs found, to be set to false on error return or when a package is not found*/
 	foundAllRpms = true
 	for _, node := range rpmsToFind {
@@ -1600,7 +1589,9 @@ func findAllRPMSUpstream(rpmsToFind []*PkgNode, outDir, tmpDir, workerTar, exist
 			/*clear Version information so that any available version and release can be used*/
 			clearVersion(node.VersionedPkg)
 		}
-		resolvedPackages, err := cloner.WhatProvides(node.VersionedPkg)
+		//initialize an array of strings to hold the resolved packages
+		var resolvedPackages []string
+		resolvedPackages, err = cloner.WhatProvides(node.VersionedPkg)
 		if err != nil {
 			foundAllRpms = false
 			msg := fmt.Sprintf("Failed to resolve (%s) to a package. Error: %s", node.VersionedPkg, err)

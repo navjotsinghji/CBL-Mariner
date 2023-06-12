@@ -13,6 +13,7 @@ import (
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/pkgjson"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/timestamp"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/pkg/profile"
+	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/packagerepo/repocloner/rpmrepocloner"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -33,7 +34,7 @@ var (
         tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
         packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
 
-	resolveCylesFromUpstream      = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
+	resolveCyclesFromUpstream      = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
 	outDir                        = exe.OutputDirFlag(app, "Directory to download packages into.")
 	existingRpmsDir               = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
 	existingToolchainRpmDir       = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
@@ -42,7 +43,7 @@ var (
 	repoFiles                     = app.Flag("repo-file", "Full path to a repo file").Required().ExistingFiles()
 	usePreviewRepo                = app.Flag("use-preview-repo", "Pull packages from the upstream preview repo").Bool()
 	toolchainManifest             = app.Flag("toolchain-manifest", "Path to a list of RPMs which are created by the toolchain. Will mark RPMs from this list as prebuilt.").ExistingFile()
-	ignoreVersionToResolveSelfDep = app.Flag("ignore-version-to-resolve-selfdep", "Ignore package version while downloading package from usptream when resolving cycle").Bool()
+	ignoreVersionToResolveSelfDep = app.Flag("ignore-version-to-resolve-selfdep", "Ignore package version while downloading package from upstream when resolving cycle").Bool()
 
 	depGraph = pkggraph.NewPkgGraph()
 )
@@ -81,8 +82,20 @@ func main() {
 		logger.Log.Panic(err)
 	}
 
+	var cloner *rpmrepocloner.RpmRepoCloner = nil
+	/*
+	disableUpstreamRepos is set to false because we want to download packages from upstream
+	disableDefaultRepos is also set to false. This can be enabled by sending a flag to grapher
+	*/
+	if *resolveCyclesFromUpstream {
+		cloner,err = rpmrepocloner.ConstructClonerWithNetwork(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, "", "", *usePreviewRepo, false, false, *repoFiles)
+		if err != nil {
+			logger.Log.Panic(err)
+		}
+		defer cloner.Close()
+	}
 	logger.Log.Info("Running cycle resolution to fix any cycles in the dependency graph")
-	err = depGraph.MakeDAG(*resolveCylesFromUpstream, *outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *usePreviewRepo, *ignoreVersionToResolveSelfDep, *repoFiles)
+	err = depGraph.MakeDAG(*resolveCyclesFromUpstream, *ignoreVersionToResolveSelfDep, cloner)
 	if err != nil {
 		logger.Log.Panic(err)
 	}
