@@ -9,11 +9,11 @@ import (
 
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/exe"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/logger"
+	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/packagerepo/repocloner/rpmrepocloner"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/pkggraph"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/pkgjson"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/timestamp"
 	"github.com/microsoft/CBL-Mariner/toolkit/tools/pkg/profile"
-	"github.com/microsoft/CBL-Mariner/toolkit/tools/internal/packagerepo/repocloner/rpmrepocloner"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -23,18 +23,18 @@ var (
 	input  = exe.InputFlag(app, "Input json listing all local SRPMs")
 	output = exe.OutputFlag(app, "Output file to export the graph to")
 
-	logFile          = exe.LogFileFlag(app)
-	logLevel         = exe.LogLevelFlag(app)
-	profFlags        = exe.SetupProfileFlags(app)
-	strictGoals      = app.Flag("strict-goals", "Don't allow missing goal packages").Bool()
-	strictUnresolved = app.Flag("strict-unresolved", "Don't allow missing unresolved packages").Bool()
-	timestampFile    = app.Flag("timestamp-file", "File that stores timestamps for this program.").String()
+	logFile               = exe.LogFileFlag(app)
+	logLevel              = exe.LogLevelFlag(app)
+	profFlags             = exe.SetupProfileFlags(app)
+	strictGoals           = app.Flag("strict-goals", "Don't allow missing goal packages").Bool()
+	strictUnresolved      = app.Flag("strict-unresolved", "Don't allow missing unresolved packages").Bool()
+	timestampFile         = app.Flag("timestamp-file", "File that stores timestamps for this program.").String()
 	usePMCtoResolveCycles = app.Flag("usePMCtoresolvecycles", "Cycles will be resolved by downloading rpm packages from PMC if locally unavailable").Bool()
-	tlsClientCert = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
-        tlsClientKey  = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
-        packageURLlist  = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
+	tlsClientCert         = app.Flag("tls-cert", "TLS client certificate to use when downloading files.").String()
+	tlsClientKey          = app.Flag("tls-key", "TLS client key to use when downloading files.").String()
+	packageURLlist        = app.Flag("packageURLlist", "PACKAGE_URL_LIST").Strings()
 
-	resolveCyclesFromUpstream      = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
+	resolveCyclesFromUpstream     = app.Flag("resolve-cycles-from-upstream", "Let grapher resolve cycles by marking rpms available in repo as remote").Bool()
 	outDir                        = exe.OutputDirFlag(app, "Directory to download packages into.")
 	existingRpmsDir               = app.Flag("rpm-dir", "Directory that contains already built RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
 	existingToolchainRpmDir       = app.Flag("toolchain-rpms-dir", "Directory that contains already built toolchain RPMs. Should contain top level directories for architecture.").Required().ExistingDir()
@@ -84,11 +84,11 @@ func main() {
 
 	var cloner *rpmrepocloner.RpmRepoCloner = nil
 	/*
-	disableUpstreamRepos is set to false because we want to download packages from upstream
-	disableDefaultRepos is also set to false. This can be enabled by sending a flag to grapher
+		disableUpstreamRepos is set to false because we want to download packages from upstream
+		disableDefaultRepos is also set to false. This can be enabled by sending a flag to grapher
 	*/
 	if *resolveCyclesFromUpstream {
-		cloner,err = rpmrepocloner.ConstructClonerWithNetwork(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, "", "", *usePreviewRepo, false, false, *repoFiles)
+		cloner, err = rpmrepocloner.ConstructClonerWithNetwork(*outDir, *tmpDir, *workerTar, *existingRpmsDir, *existingToolchainRpmDir, *tlsClientCert, *tlsClientKey, *usePreviewRepo, false, false, *repoFiles)
 		if err != nil {
 			logger.Log.Panic(err)
 		}

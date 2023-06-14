@@ -104,7 +104,7 @@ endif
 
 # Convert the dependency information in the json file into a graph structure
 # We require all the toolchain RPMs to be available here to help resolve unfixable cyclic dependencies
-$(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms) $(TOOLCHAIN_MANIFEST) $(chroot_worker) $(pkggen_local_repo) $(depend_REPO_LIST)
+$(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms) $(TOOLCHAIN_MANIFEST) $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(chroot_worker) $(depend_REPO_LIST)
 	$(go-grapher) \
 		--input $(specs_file) \
 		$(logging_command) \
@@ -123,6 +123,8 @@ $(graph_file): $(specs_file) $(go-grapher) $(toolchain_rpms) $(TOOLCHAIN_MANIFES
 		--rpm-dir=$(RPMS_DIR) \
 		--toolchain-rpms-dir=$(TOOLCHAIN_RPMS_DIR) \
 		--toolchain-manifest=$(TOOLCHAIN_MANIFEST) \
+		--tls-cert=$(TLS_CERT) \
+		--tls-key=$(TLS_KEY) \
 		--tmp-dir=$(cache_working_dir) \
 		--tdnf-worker=$(chroot_worker) \
 		$(foreach repo, $(pkggen_local_repo) $(graphpkgfetcher_cloned_repo) $(REPO_LIST), --repo-file=$(repo))

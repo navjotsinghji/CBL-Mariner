@@ -1189,7 +1189,7 @@ func (g *PkgGraph) CreateSubGraph(rootNode *PkgNode) (subGraph *PkgGraph, err er
 // The function will lock 'graphMutex' before performing the check if the mutex is not nil.
 func isSRPMAvailableUpstream(pkgGraph *PkgGraph, graphMutex *sync.RWMutex, srpmPath string, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (isAvailableUpstream bool, err error) {
 	expectedRpmNodes := NodesProvidedBySRPM(srpmPath, pkgGraph, graphMutex)
-	isAvailableUpstream,err = findAllRPMSUpstream(expectedRpmNodes, ignoreVersionToResolveSelfDep, cloner)
+	isAvailableUpstream, err = findAllRPMSUpstream(expectedRpmNodes, ignoreVersionToResolveSelfDep, cloner)
 	return
 }
 
@@ -1577,8 +1577,9 @@ func findAllRPMS(rpmsToFind []string) (foundAllRpms bool, missingRpms []string) 
 }
 
 // findAllRPMSUpstream returns true if all RPMs requested are found in PMC/repo.
-//  This is used to check if all RPMs are available in PMC/repo before starting a build.
-//  needs repo-list, manifest files rpmrepocloner
+//
+//	This is used to check if all RPMs are available in PMC/repo before starting a build.
+//	needs repo-list, manifest files rpmrepocloner
 func findAllRPMSUpstream(rpmsToFind []*PkgNode, ignoreVersionToResolveSelfDep bool, cloner *rpmrepocloner.RpmRepoCloner) (foundAllRpms bool, err error) {
 	/*assuming allRPMs found, to be set to false on error return or when a package is not found*/
 	foundAllRpms = true
